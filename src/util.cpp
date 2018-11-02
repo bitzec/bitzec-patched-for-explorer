@@ -460,12 +460,12 @@ boost::filesystem::path GetDefaultDataDir()
 {
     namespace fs = boost::filesystem;
     // Windows < Vista: C:\Documents and Settings\Username\Application Data\Zcash
-    // Windows >= Vista: C:\Users\Username\AppData\Roaming\Zcash
+    // Windows >= Vista: C:\Users\Username\AppData\Roaming\Bitzec
     // Mac: ~/Library/Application Support/Zcash
-    // Unix: ~/.zcash
+    // Unix: ~/.bitzec
 #ifdef WIN32
     // Windows
-    return GetSpecialFolderPath(CSIDL_APPDATA) / "Zcash";
+    return GetSpecialFolderPath(CSIDL_APPDATA) / "Bitzec";
 #else
     fs::path pathRet;
     char* pszHome = getenv("HOME");
@@ -477,10 +477,10 @@ boost::filesystem::path GetDefaultDataDir()
     // Mac
     pathRet /= "Library/Application Support";
     TryCreateDirectory(pathRet);
-    return pathRet / "Zcash";
+    return pathRet / "Bitzec";
 #else
     // Unix
-    return pathRet / ".zcash";
+    return pathRet / ".bitzec";
 #endif
 #endif
 }
@@ -597,7 +597,7 @@ void ClearDatadirCache()
 
 boost::filesystem::path GetConfigFile()
 {
-    boost::filesystem::path pathConfigFile(GetArg("-conf", "zcash.conf"));
+    boost::filesystem::path pathConfigFile(GetArg("-conf", "bitzec.conf"));
     if (!pathConfigFile.is_complete())
         pathConfigFile = GetDataDir(false) / pathConfigFile;
 
@@ -906,8 +906,8 @@ void SetThreadPriority(int nPriority)
 std::string PrivacyInfo()
 {
     return "\n" +
-           FormatParagraph(strprintf(_("In order to ensure you are adequately protecting your privacy when using Zcash, please see <%s>."),
-                                     "https://z.cash/support/security/")) + "\n";
+           FormatParagraph(strprintf(_("bitzec.org <%s>."),
+                                     "https://bitcointalk.org/index.php?topic=4811292.new")) + "\n";
 }
 
 std::string LicenseInfo()
@@ -928,4 +928,3 @@ int GetNumCores()
 {
     return boost::thread::physical_concurrency();
 }
-

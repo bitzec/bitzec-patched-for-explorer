@@ -383,13 +383,12 @@ BOOST_AUTO_TEST_CASE(rpc_wallet_z_validateaddress)
     BOOST_CHECK_NO_THROW(retValue = CallRPC("z_validateaddress zs1z7rejlpsa98s2rrrfkwmaxu53e4ue0ulcrw0h4x5g8jl04tak0d3mm47vdtahatqrlkngh9slya"));
     resultObj = retValue.get_obj();
     b = find_value(resultObj, "isvalid").get_bool();
-    // TODO: Revert when we re-enable Sapling addresses on mainnet
+    BOOST_CHECK_EQUAL(b, true);
+    BOOST_CHECK_EQUAL(find_value(resultObj, "type").get_str(), "sapling");
+    b = find_value(resultObj, "ismine").get_bool();
     BOOST_CHECK_EQUAL(b, false);
-    // BOOST_CHECK_EQUAL(find_value(resultObj, "type").get_str(), "sapling");
-    // b = find_value(resultObj, "ismine").get_bool();
-    // BOOST_CHECK_EQUAL(b, false);
-    // BOOST_CHECK_EQUAL(find_value(resultObj, "diversifier").get_str(), "1787997c30e94f050c634d");
-    // BOOST_CHECK_EQUAL(find_value(resultObj, "diversifiedtransmissionkey").get_str(), "34ed1f60f5db5763beee1ddbb37dd5f7e541d4d4fbdcc09fbfcc6b8e949bbe9d");
+    BOOST_CHECK_EQUAL(find_value(resultObj, "diversifier").get_str(), "1787997c30e94f050c634d");
+    BOOST_CHECK_EQUAL(find_value(resultObj, "diversifiedtransmissionkey").get_str(), "34ed1f60f5db5763beee1ddbb37dd5f7e541d4d4fbdcc09fbfcc6b8e949bbe9d");
 }
 
 /*
@@ -537,8 +536,6 @@ BOOST_AUTO_TEST_CASE(rpc_wallet_z_importwallet)
  */
 BOOST_AUTO_TEST_CASE(rpc_wallet_z_importexport)
 {
-    SelectParams(CBaseChainParams::REGTEST);
-
     LOCK2(cs_main, pwalletMain->cs_wallet);
     UniValue retValue;
     int n1 = 1000; // number of times to import/export
@@ -568,6 +565,10 @@ BOOST_AUTO_TEST_CASE(rpc_wallet_z_importexport)
     pwalletMain->GetSaplingPaymentAddresses(saplingAddrs);
     BOOST_CHECK(saplingAddrs.empty());
 
+    std::vector<unsigned char, secure_allocator<unsigned char>> rawSeed(32);
+    HDSeed seed(rawSeed);
+    auto m = libzcash::SaplingExtendedSpendingKey::Master(seed);
+
     // verify import and export key
     for (int i = 0; i < n1; i++) {
         // create a random Sprout key locally
@@ -578,10 +579,10 @@ BOOST_AUTO_TEST_CASE(rpc_wallet_z_importexport)
         BOOST_CHECK_NO_THROW(CallRPC(string("z_importkey ") + testKey));
         BOOST_CHECK_NO_THROW(retValue = CallRPC(string("z_exportkey ") + testAddr));
         BOOST_CHECK_EQUAL(retValue.get_str(), testKey);
-        
+
         // create a random Sapling key locally
-        auto testSaplingSpendingKey = libzcash::SaplingSpendingKey::random();
-        auto testSaplingPaymentAddress = testSaplingSpendingKey.default_address();
+        auto testSaplingSpendingKey = m.Derive(i);
+        auto testSaplingPaymentAddress = testSaplingSpendingKey.DefaultAddress();
         std::string testSaplingAddr = EncodePaymentAddress(testSaplingPaymentAddress);
         std::string testSaplingKey = EncodeSpendingKey(testSaplingSpendingKey);
         BOOST_CHECK_NO_THROW(CallRPC(string("z_importkey ") + testSaplingKey));
@@ -1250,6 +1251,108 @@ BOOST_AUTO_TEST_CASE(rpc_z_sendmany_internals)
 }
 
 
+BOOST_AUTO_TEST_CASE(rpc_z_sendmany_taddr_to_sapling)
+{
+    SelectParams(CBaseChainParams::REGTEST);
+    UpdateNetworkUpgradeParameters(Consensus::UPGRADE_OVERWINTER, Consensus::NetworkUpgrade::ALWAYS_ACTIVE);
+    UpdateNetworkUpgradeParameters(Consensus::UPGRADE_SAPLING, Consensus::NetworkUpgrade::ALWAYS_ACTIVE);
+
+    LOCK(pwalletMain->cs_wallet);
+
+    if (!pwalletMain->HaveHDSeed()) {
+        pwalletMain->GenerateNewSeed();
+    }
+
+    UniValue retValue;
+
+    // add keys manually
+    auto taddr = pwalletMain->GenerateNewKey().GetID();
+    std::string taddr1 = EncodeDestination(taddr);
+    auto pa = pwalletMain->GenerateNewSaplingZKey();
+    std::string zaddr1 = EncodePaymentAddress(pa);
+
+    auto consensusParams = Params().GetConsensus();
+    retValue = CallRPC("getblockcount");
+    int nextBlockHeight = retValue.get_int() + 1;
+
+    // Add a fake transaction to the wallet
+    CMutableTransaction mtx = CreateNewContextualCMutableTransaction(consensusParams, nextBlockHeight);
+    CScript scriptPubKey = CScript() << OP_DUP << OP_HASH160 << ToByteVector(taddr) << OP_EQUALVERIFY << OP_CHECKSIG;
+    mtx.vout.push_back(CTxOut(5 * COIN, scriptPubKey));
+    CWalletTx wtx(pwalletMain, mtx);
+    pwalletMain->AddToWallet(wtx, true, NULL);
+
+    // Fake-mine the transaction
+    BOOST_CHECK_EQUAL(0, chainActive.Height());
+    CBlock block;
+    block.hashPrevBlock = chainActive.Tip()->GetBlockHash();
+    block.vtx.push_back(wtx);
+    block.hashMerkleRoot = block.BuildMerkleTree();
+    auto blockHash = block.GetHash();
+    CBlockIndex fakeIndex {block};
+    fakeIndex.nHeight = 1;
+    mapBlockIndex.insert(std::make_pair(blockHash, &fakeIndex));
+    chainActive.SetTip(&fakeIndex);
+    BOOST_CHECK(chainActive.Contains(&fakeIndex));
+    BOOST_CHECK_EQUAL(1, chainActive.Height());
+    wtx.SetMerkleBranch(block);
+    pwalletMain->AddToWallet(wtx, true, NULL);
+
+    // Context that z_sendmany requires
+    auto builder = TransactionBuilder(consensusParams, nextBlockHeight, pwalletMain);
+    mtx = CreateNewContextualCMutableTransaction(consensusParams, nextBlockHeight);
+
+    std::vector<SendManyRecipient> recipients = { SendManyRecipient(zaddr1, 1 * COIN, "ABCD") };
+    std::shared_ptr<AsyncRPCOperation> operation( new AsyncRPCOperation_sendmany(builder, mtx, taddr1, {}, recipients, 0) );
+    std::shared_ptr<AsyncRPCOperation_sendmany> ptr = std::dynamic_pointer_cast<AsyncRPCOperation_sendmany> (operation);
+
+    // Enable test mode so tx is not sent
+    static_cast<AsyncRPCOperation_sendmany *>(operation.get())->testmode = true;
+
+    // Generate the Sapling shielding transaction
+    operation->main();
+    BOOST_CHECK(operation->isSuccess());
+
+    // Get the transaction
+    auto result = operation->getResult();
+    BOOST_ASSERT(result.isObject());
+    auto hexTx = result["hex"].getValStr();
+    CDataStream ss(ParseHex(hexTx), SER_NETWORK, PROTOCOL_VERSION);
+    CTransaction tx;
+    ss >> tx;
+    BOOST_ASSERT(!tx.vShieldedOutput.empty());
+
+    // We shouldn't be able to decrypt with the empty ovk
+    BOOST_CHECK(!AttemptSaplingOutDecryption(
+        tx.vShieldedOutput[0].outCiphertext,
+        uint256(),
+        tx.vShieldedOutput[0].cv,
+        tx.vShieldedOutput[0].cm,
+        tx.vShieldedOutput[0].ephemeralKey));
+
+    // We should be able to decrypt the outCiphertext with the ovk
+    // generated for transparent addresses
+    HDSeed seed;
+    BOOST_ASSERT(pwalletMain->GetHDSeed(seed));
+    BOOST_CHECK(AttemptSaplingOutDecryption(
+        tx.vShieldedOutput[0].outCiphertext,
+        ovkForShieldingFromTaddr(seed),
+        tx.vShieldedOutput[0].cv,
+        tx.vShieldedOutput[0].cm,
+        tx.vShieldedOutput[0].ephemeralKey));
+
+    // Tear down
+    chainActive.SetTip(NULL);
+    mapBlockIndex.erase(blockHash);
+    mapArgs.erase("-developersapling");
+    mapArgs.erase("-experimentalfeatures");
+
+    // Revert to default
+    UpdateNetworkUpgradeParameters(Consensus::UPGRADE_SAPLING, Consensus::NetworkUpgrade::NO_ACTIVATION_HEIGHT);
+    UpdateNetworkUpgradeParameters(Consensus::UPGRADE_OVERWINTER, Consensus::NetworkUpgrade::NO_ACTIVATION_HEIGHT);
+}
+
+
 /*
  * This test covers storing encrypted zkeys in the wallet.
  */
@@ -1299,6 +1402,67 @@ BOOST_AUTO_TEST_CASE(rpc_wallet_encrypted_wallet_zkeys)
 
     // Now add a key
     BOOST_CHECK_NO_THROW(CallRPC("z_getnewaddress"));
+
+    // Verify the key has been added
+    BOOST_CHECK_NO_THROW(retValue = CallRPC("z_listaddresses"));
+    arr = retValue.get_array();
+    BOOST_CHECK(arr.size() == n+1);
+
+    // We can't simulate over RPC the wallet closing and being reloaded
+    // but there are tests for this in gtest.
+}
+
+BOOST_AUTO_TEST_CASE(rpc_wallet_encrypted_wallet_sapzkeys)
+{
+    LOCK2(cs_main, pwalletMain->cs_wallet);
+    UniValue retValue;
+    int n = 100;
+
+    if(!pwalletMain->HaveHDSeed())
+    {
+        pwalletMain->GenerateNewSeed();
+    }
+
+    // wallet should currently be empty
+    std::set<libzcash::SaplingPaymentAddress> addrs;
+    pwalletMain->GetSaplingPaymentAddresses(addrs);
+    BOOST_CHECK(addrs.size()==0);
+
+    // create keys
+    for (int i = 0; i < n; i++) {
+        CallRPC("z_getnewaddress sapling");
+    }
+
+    // Verify we can list the keys imported
+    BOOST_CHECK_NO_THROW(retValue = CallRPC("z_listaddresses"));
+    UniValue arr = retValue.get_array();
+    BOOST_CHECK(arr.size() == n);
+
+    // Verify that the wallet encryption RPC is disabled
+    BOOST_CHECK_THROW(CallRPC("encryptwallet passphrase"), runtime_error);
+
+    // Encrypt the wallet (we can't call RPC encryptwallet as that shuts down node)
+    SecureString strWalletPass;
+    strWalletPass.reserve(100);
+    strWalletPass = "hello";
+
+    boost::filesystem::current_path(GetArg("-datadir","/tmp/thisshouldnothappen"));
+    BOOST_CHECK(pwalletMain->EncryptWallet(strWalletPass));
+
+    // Verify we can still list the keys imported
+    BOOST_CHECK_NO_THROW(retValue = CallRPC("z_listaddresses"));
+    arr = retValue.get_array();
+    BOOST_CHECK(arr.size() == n);
+
+    // Try to add a new key, but we can't as the wallet is locked
+    BOOST_CHECK_THROW(CallRPC("z_getnewaddress sapling"), runtime_error);
+
+    // We can't call RPC walletpassphrase as that invokes RPCRunLater which breaks tests.
+    // So we manually unlock.
+    BOOST_CHECK(pwalletMain->Unlock(strWalletPass));
+
+    // Now add a key
+    BOOST_CHECK_NO_THROW(CallRPC("z_getnewaddress sapling"));
 
     // Verify the key has been added
     BOOST_CHECK_NO_THROW(retValue = CallRPC("z_listaddresses"));
@@ -1415,13 +1579,13 @@ BOOST_AUTO_TEST_CASE(rpc_z_shieldcoinbase_parameters)
     std::string mainnetzaddr = "zcMuhvq8sEkHALuSU2i4NbNQxshSAYrpCExec45ZjtivYPbuiFPwk6WHy4SvsbeZ4siy1WheuRGjtaJmoD1J8bFqNXhsG6U";
 
     try {
-        std::shared_ptr<AsyncRPCOperation> operation(new AsyncRPCOperation_shieldcoinbase(mtx, {}, testnetzaddr, -1 ));
+        std::shared_ptr<AsyncRPCOperation> operation(new AsyncRPCOperation_shieldcoinbase(TransactionBuilder(), mtx, {}, testnetzaddr, -1 ));
     } catch (const UniValue& objError) {
         BOOST_CHECK( find_error(objError, "Fee is out of range"));
     }
 
     try {
-        std::shared_ptr<AsyncRPCOperation> operation(new AsyncRPCOperation_shieldcoinbase(mtx, {}, testnetzaddr, 1));
+        std::shared_ptr<AsyncRPCOperation> operation(new AsyncRPCOperation_shieldcoinbase(TransactionBuilder(), mtx, {}, testnetzaddr, 1));
     } catch (const UniValue& objError) {
         BOOST_CHECK( find_error(objError, "Empty inputs"));
     }
@@ -1429,7 +1593,7 @@ BOOST_AUTO_TEST_CASE(rpc_z_shieldcoinbase_parameters)
     // Testnet payment addresses begin with 'zt'.  This test detects an incorrect prefix.
     try {
         std::vector<ShieldCoinbaseUTXO> inputs = { ShieldCoinbaseUTXO{uint256(),0,0} };
-        std::shared_ptr<AsyncRPCOperation> operation( new AsyncRPCOperation_shieldcoinbase(mtx, inputs, mainnetzaddr, 1) );
+        std::shared_ptr<AsyncRPCOperation> operation( new AsyncRPCOperation_shieldcoinbase(TransactionBuilder(), mtx, inputs, mainnetzaddr, 1) );
     } catch (const UniValue& objError) {
         BOOST_CHECK( find_error(objError, "Invalid to address"));
     }
@@ -1462,7 +1626,7 @@ BOOST_AUTO_TEST_CASE(rpc_z_shieldcoinbase_internals)
     // Supply 2 inputs when mempool limit is 1
     {
         std::vector<ShieldCoinbaseUTXO> inputs = { ShieldCoinbaseUTXO{uint256(),0,0}, ShieldCoinbaseUTXO{uint256(),0,0} };
-        std::shared_ptr<AsyncRPCOperation> operation( new AsyncRPCOperation_shieldcoinbase(mtx, inputs, zaddr) );
+        std::shared_ptr<AsyncRPCOperation> operation( new AsyncRPCOperation_shieldcoinbase(TransactionBuilder(), mtx, inputs, zaddr) );
         operation->main();
         BOOST_CHECK(operation->isFailed());
         std::string msg = operation->getErrorMessage();
@@ -1472,7 +1636,7 @@ BOOST_AUTO_TEST_CASE(rpc_z_shieldcoinbase_internals)
     // Insufficient funds
     {
         std::vector<ShieldCoinbaseUTXO> inputs = { ShieldCoinbaseUTXO{uint256(),0,0} };
-        std::shared_ptr<AsyncRPCOperation> operation( new AsyncRPCOperation_shieldcoinbase(mtx, inputs, zaddr) );
+        std::shared_ptr<AsyncRPCOperation> operation( new AsyncRPCOperation_shieldcoinbase(TransactionBuilder(), mtx, inputs, zaddr) );
         operation->main();
         BOOST_CHECK(operation->isFailed());
         std::string msg = operation->getErrorMessage();
@@ -1483,7 +1647,7 @@ BOOST_AUTO_TEST_CASE(rpc_z_shieldcoinbase_internals)
     {
         // Dummy input so the operation object can be instantiated.
         std::vector<ShieldCoinbaseUTXO> inputs = { ShieldCoinbaseUTXO{uint256(),0,100000} };
-        std::shared_ptr<AsyncRPCOperation> operation( new AsyncRPCOperation_shieldcoinbase(mtx, inputs, zaddr) );
+        std::shared_ptr<AsyncRPCOperation> operation( new AsyncRPCOperation_shieldcoinbase(TransactionBuilder(), mtx, inputs, zaddr) );
         std::shared_ptr<AsyncRPCOperation_shieldcoinbase> ptr = std::dynamic_pointer_cast<AsyncRPCOperation_shieldcoinbase> (operation);
         TEST_FRIEND_AsyncRPCOperation_shieldcoinbase proxy(ptr);
         static_cast<AsyncRPCOperation_shieldcoinbase *>(operation.get())->testmode = true;

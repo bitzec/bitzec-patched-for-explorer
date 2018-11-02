@@ -39,9 +39,10 @@ from .equihash import (
     zcash_person,
 )
 
-OVERWINTER_PROTO_VERSION = 170003
+OVERWINTER_PROTO_VERSION = 175001
 BIP0031_VERSION = 60000
-SPROUT_PROTO_VERSION = 170002  # past bip-31 for ping/pong
+SPROUT_PROTO_VERSION = 175001 # past bip-31 for ping/pong
+SAPLING_PROTO_VERSION = 175001
 MY_SUBVERSION = "/python-mininode-tester:0.0.1/"
 
 OVERWINTER_VERSION_GROUP_ID = 0x03C48270
@@ -1415,7 +1416,7 @@ class NodeConn(asyncore.dispatcher):
         vt.addrFrom.port = 0
         self.send_message(vt, True)
         print 'MiniNode: Connecting to Bitcoin Node IP # ' + dstaddr + ':' \
-            + str(dstport)
+            + str(dstport) + ' using version ' + str(protocol_version)
 
         try:
             self.connect((dstaddr, dstport))

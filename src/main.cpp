@@ -45,7 +45,7 @@
 using namespace std;
 
 #if defined(NDEBUG)
-# error "Zcash cannot be compiled without assertions."
+# error "Bitzec cannot be compiled without assertions."
 #endif
 
 #include "librustzcash.h"
@@ -108,7 +108,7 @@ static void CheckBlockIndex();
 /** Constant stuff for coinbase transactions we create: */
 CScript COINBASE_FLAGS;
 
-const string strMessageMagic = "Zcash Signed Message:\n";
+const string strMessageMagic = "Bitzec Signed Message:\n";
 
 // Internal stuff
 namespace {
@@ -880,8 +880,14 @@ unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& in
  * 1. AcceptToMemoryPool calls CheckTransaction and this function.
  * 2. ProcessNewBlock calls AcceptBlock, which calls CheckBlock (which calls CheckTransaction)
  *    and ContextualCheckBlock (which calls this function).
+ * 3. The isInitBlockDownload argument is only to assist with testing.
  */
-bool ContextualCheckTransaction(const CTransaction& tx, CValidationState &state, const int nHeight, const int dosLevel)
+bool ContextualCheckTransaction(
+        const CTransaction& tx,
+        CValidationState &state,
+        const int nHeight,
+        const int dosLevel,
+        bool (*isInitBlockDownload)())
 {
     bool overwinterActive = NetworkUpgradeActive(nHeight, Params().GetConsensus(), Consensus::UPGRADE_OVERWINTER);
     bool saplingActive = NetworkUpgradeActive(nHeight, Params().GetConsensus(), Consensus::UPGRADE_SAPLING);
@@ -889,7 +895,7 @@ bool ContextualCheckTransaction(const CTransaction& tx, CValidationState &state,
 
     // If Sprout rules apply, reject transactions which are intended for Overwinter and beyond
     if (isSprout && tx.fOverwintered) {
-        return state.DoS(IsInitialBlockDownload() ? 0 : dosLevel,
+        return state.DoS(isInitBlockDownload() ? 0 : dosLevel,
                          error("ContextualCheckTransaction(): overwinter is not active yet"),
                          REJECT_INVALID, "tx-overwinter-not-active");
     }
@@ -990,7 +996,7 @@ bool ContextualCheckTransaction(const CTransaction& tx, CValidationState &state,
                                         dataToBeSigned.begin(), 32,
                                         tx.joinSplitPubKey.begin()
                                         ) != 0) {
-            return state.DoS(IsInitialBlockDownload() ? 0 : 100,
+            return state.DoS(isInitBlockDownload() ? 0 : 100,
                                 error("CheckTransaction(): invalid joinsplit signature"),
                                 REJECT_INVALID, "bad-txns-invalid-joinsplit-signature");
         }
@@ -1773,7 +1779,7 @@ bool ReadBlockFromDisk(CBlock& block, const CBlockIndex* pindex)
 
 CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
 {
-    CAmount nSubsidy = 12.5 * COIN;
+    CAmount nSubsidy = 21000 * COIN;
 
     // Mining slow start
     // The subsidy is ramped up linearly, skipping the middle payout of
@@ -1794,8 +1800,53 @@ CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
     if (halvings >= 64)
         return 0;
 
-    // Subsidy is cut in half every 840,000 blocks which will occur approximately every 4 years.
-    nSubsidy >>= halvings;
+if ( nHeight < 77777 ) nSubsidy = (21000 * COIN);
+    else if ( nHeight < 97777 ) nSubsidy = (20000 * COIN); //+20k blocks
+    else if ( nHeight < 117777 ) nSubsidy = (19000 * COIN);
+    else if ( nHeight < 137777 ) nSubsidy = (18000 * COIN);
+    else if ( nHeight < 157777 ) nSubsidy = (17000 * COIN);
+    else if ( nHeight < 177777 ) nSubsidy = (16000 * COIN);
+    else if ( nHeight < 197777 ) nSubsidy = (15000 * COIN);
+    else if ( nHeight < 217777 ) nSubsidy = (14000 * COIN);
+    else if ( nHeight < 237777 ) nSubsidy = (13000 * COIN);
+    else if ( nHeight < 257777 ) nSubsidy = (12000 * COIN);
+    else if ( nHeight < 277777 ) nSubsidy = (11000 * COIN);
+    else if ( nHeight < 297777 ) nSubsidy = (10000 * COIN);
+    else if ( nHeight < 317777 ) nSubsidy = (9000 * COIN);
+    else if ( nHeight < 337777 ) nSubsidy = (8000 * COIN);
+    else if ( nHeight < 367777 ) nSubsidy = (7000 * COIN); //+30k blocks
+    else if ( nHeight < 417777 ) nSubsidy = (6000 * COIN); //+50k blocks
+    else if ( nHeight < 467777 ) nSubsidy = (5000* COIN);
+    else if ( nHeight < 517777 ) nSubsidy = (4000 * COIN);
+    else if ( nHeight < 567777 ) nSubsidy = (3000 * COIN);
+    else if ( nHeight < 617777 ) nSubsidy = (2000 * COIN);
+    else if ( nHeight < 667777 ) nSubsidy = (1000 * COIN);
+    else if ( nHeight < 717777 ) nSubsidy = (900 * COIN);
+    else if ( nHeight < 777777 ) nSubsidy = (777 * COIN);
+    else if ( nHeight < 817777 ) nSubsidy = (700 * COIN);
+    else if ( nHeight < 867777 ) nSubsidy = (600 * COIN);
+    else if ( nHeight < 917777 ) nSubsidy = (500 * COIN);
+    else if ( nHeight < 967777 ) nSubsidy = (400 * COIN);
+    else if ( nHeight < 1017777 ) nSubsidy = (300 * COIN);
+    else if ( nHeight < 1067777 ) nSubsidy = (200 * COIN);
+    else if ( nHeight < 1117777 ) nSubsidy = (100 * COIN);
+    else if ( nHeight < 1167777 ) nSubsidy = (77 * COIN);
+    else if ( nHeight < 1217777 ) nSubsidy = (47 * COIN);
+    else if ( nHeight < 1267777 ) nSubsidy = (37 * COIN);
+    else if ( nHeight < 1317777 ) nSubsidy = (27 * COIN);
+    else if ( nHeight < 1367777 ) nSubsidy = (17 * COIN);
+    else {
+        int halvings = (nHeight - 1367776) / consensusParams.nSubsidyHalvingInterval;
+
+        nSubsidy=7 * COIN;
+
+        if(nSubsidy >= 64){
+            nSubsidy = 0;
+        }else{
+        	nSubsidy >>= halvings;
+        }
+
+    }
     return nSubsidy;
 }
 
@@ -5284,15 +5335,15 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
             return false;
         }
 
-        // When Overwinter is active, reject incoming connections from non-Overwinter nodes
+        // Reject incoming connections from nodes that don't know about the current epoch
         const Consensus::Params& params = Params().GetConsensus();
-        if (NetworkUpgradeActive(GetHeight(), params, Consensus::UPGRADE_OVERWINTER)
-            && pfrom->nVersion < params.vUpgrades[Consensus::UPGRADE_OVERWINTER].nProtocolVersion)
+        auto currentEpoch = CurrentEpoch(GetHeight(), params);
+        if (pfrom->nVersion < params.vUpgrades[currentEpoch].nProtocolVersion)
         {
             LogPrintf("peer=%d using obsolete version %i; disconnecting\n", pfrom->id, pfrom->nVersion);
             pfrom->PushMessage("reject", strCommand, REJECT_OBSOLETE,
                             strprintf("Version must be %d or greater",
-                            params.vUpgrades[Consensus::UPGRADE_OVERWINTER].nProtocolVersion));
+                            params.vUpgrades[currentEpoch].nProtocolVersion));
             pfrom->fDisconnect = true;
             return false;
         }
@@ -5417,15 +5468,15 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
 
     // Disconnect existing peer connection when:
     // 1. The version message has been received
-    // 2. Overwinter is active
-    // 3. Peer version is pre-Overwinter
-    else if (NetworkUpgradeActive(GetHeight(), chainparams.GetConsensus(), Consensus::UPGRADE_OVERWINTER)
-            && (pfrom->nVersion < chainparams.GetConsensus().vUpgrades[Consensus::UPGRADE_OVERWINTER].nProtocolVersion))
+    // 2. Peer version is below the minimum version for the current epoch
+    else if (pfrom->nVersion < chainparams.GetConsensus().vUpgrades[
+        CurrentEpoch(GetHeight(), chainparams.GetConsensus())].nProtocolVersion)
     {
         LogPrintf("peer=%d using obsolete version %i; disconnecting\n", pfrom->id, pfrom->nVersion);
         pfrom->PushMessage("reject", strCommand, REJECT_OBSOLETE,
                             strprintf("Version must be %d or greater",
-                            chainparams.GetConsensus().vUpgrades[Consensus::UPGRADE_OVERWINTER].nProtocolVersion));
+                            chainparams.GetConsensus().vUpgrades[
+                                CurrentEpoch(GetHeight(), chainparams.GetConsensus())].nProtocolVersion));
         pfrom->fDisconnect = true;
         return false;
     }
@@ -5745,8 +5796,11 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
             BOOST_FOREACH(uint256 hash, vEraseQueue)
                 EraseOrphanTx(hash);
         }
-        // TODO: currently, prohibit joinsplits from entering mapOrphans
-        else if (fMissingInputs && tx.vjoinsplit.size() == 0)
+        // TODO: currently, prohibit joinsplits and shielded spends/outputs from entering mapOrphans
+        else if (fMissingInputs &&
+                 tx.vjoinsplit.empty() &&
+                 tx.vShieldedSpend.empty() &&
+                 tx.vShieldedOutput.empty())
         {
             AddOrphanTx(tx, pfrom->GetId());
 
