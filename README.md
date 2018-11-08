@@ -40,7 +40,7 @@ zlib1g-dev wget curl bsdmainutils automake
 
 Clone Bitzec Repository :
 
-git clone https://github.com/bitzec/bitzec.git
+git clone https://github.com/bitzec/bitzec-patched-for-explorer
 
 Build it :
 cd bitzec/
