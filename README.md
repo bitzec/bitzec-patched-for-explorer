@@ -43,8 +43,8 @@ Clone Bitzec Repository :
 git clone https://github.com/bitzec/bitzec-patched-for-explorer
 
 Build it :
-cd bitzec/
-./zcutil/build.sh -j$(nproc)
+cd bitzec-patched-for-exploer/
+./zcutil/build.sh -j$(nproc) or fastway  ./zcutil/build.sh --disable-tests -j$(nproc)
 fetch key:
 ./zcutil/fetch-params.sh
 mkdir -p ~/.bitzec
